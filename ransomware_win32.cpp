@@ -245,7 +245,7 @@ int crypt_file(char* in_file)
 			printf("Error in DefineDosDeviceA DDD_RAW_TARGET_PATH: %x\n", GetLastError());
 		}
 		if (!MoveFileExA(out_file, dosdevPath, MOVEFILE_REPLACE_EXISTING)) {
-			printf("Error in MoveFileExA: %llx\n", GetLastError());
+			printf("Error in MoveFileExA: %x\n", GetLastError());
 		}
 		
 		if (!DefineDosDeviceA(DDD_REMOVE_DEFINITION, dosdevName, 0)) {
