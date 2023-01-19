@@ -287,7 +287,8 @@ int crypt_file(char* in_file)
 		}
 		crypt_content((BYTE*)lpMapAddress, InpFileSize);
 		UnmapViewOfFile(lpMapAddress);
-		//FlushFileBuffers(hInpFile);
+		// Flush by process itself or SYSTEM Cache Manager
+		FlushFileBuffers(hInpFile);
 		CloseHandle(hInpFileMapping);
 		CloseHandle(hInpFile);
 	}
