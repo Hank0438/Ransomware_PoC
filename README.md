@@ -6,7 +6,7 @@ gcc ransomware_win32.cpp -o ransomware_win32
 
 # Usages 
 ```
-tool.exe <mode> <folder>
+tool.exe <mode> <method> <folder>
   arg1 - mode
     0: Decryption
     1: Encryption
