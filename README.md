@@ -5,6 +5,7 @@ A simple ransomware for testing
 gcc ransomware_win32.cpp -o ransomware_win32
 
 # Usages 
+```
 tool.exe <mode> <folder>
   arg1 - mode
     0: Decryption
@@ -18,3 +19,4 @@ tool.exe <mode> <folder>
   arg3 - target folder
   arg4 - wallpaper source location
   arg5 - ransom note location
+```
